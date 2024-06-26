@@ -1,3 +1,4 @@
 {
-    "java.configuration.updateBuildConfiguration": "interactive"
+    "java.configuration.updateBuildConfiguration": "interactive",
+    "cmake.sourceDirectory": "/root/Desktop/WorkSpace/Flutter_view_camera_app/view_camera_app/linux/flutter"
 }

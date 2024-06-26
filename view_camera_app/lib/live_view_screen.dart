@@ -55,17 +55,14 @@ class _LiveViewScreenState extends State<LiveViewScreen> {
         future: _initializeControllerFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.done) {
-            // Ensure camera preview fills the entire screen
             return Stack(
               children: [
-                // Use a full-screen container with no padding
                 Container(
                   width: double.infinity,
                   height: double.infinity,
                   child: CameraPreview(_controller),
                 ),
                 Positioned(
-                  // Adjust button positions as needed
                   bottom: 30.0,
                   right: 30.0,
                   child: FloatingActionButton(

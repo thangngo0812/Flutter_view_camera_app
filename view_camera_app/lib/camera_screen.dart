@@ -1,7 +1,12 @@
-import 'package:flutter/material.dart';
+import 'dart:io';
+
 import 'package:camera/camera.dart';
-import 'live_view_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' show basename;
+import 'package:path_provider/path_provider.dart';
 import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 class CameraScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
@@ -13,63 +18,54 @@ class CameraScreen extends StatefulWidget {
 }
 
 class _CameraScreenState extends State<CameraScreen> {
-  CameraController? _controller;
-  final FlutterFFmpeg _flutterFFmpeg = FlutterFFmpeg();
-  final FlutterFFmpegConfig _flutterFFmpegConfig = FlutterFFmpegConfig();
+  File? _selectedVideo;
   bool _isStreaming = false;
+  final FlutterFFmpeg _flutterFFmpeg = FlutterFFmpeg();
 
   @override
   void initState() {
     super.initState();
-    _initializeCamera();
-    _flutterFFmpegConfig.enableLogCallback((log) {
-      print("FFmpeg log: $log");
-    });
+    _requestPermissions();
   }
 
-  Future<void> _initializeCamera() async {
-    if (widget.cameras.isEmpty) {
-      print('No camera is available');
-      return;
-    }
+  Future<void> _requestPermissions() async {
+    await [
+      Permission.camera,
+      Permission.microphone,
+      Permission.storage,
+    ].request();
+  }
 
-    _controller = CameraController(
-      widget.cameras[0],
-      ResolutionPreset.medium,
-      enableAudio: false,
-    );
-
-    try {
-      await _controller?.initialize();
-      setState(() {});
-    } catch (e) {
-      print('Error initializing camera: $e');
-    }
+  @override
+  void dispose() {
+    _flutterFFmpeg.cancel(); 
+    super.dispose();
   }
 
   Future<void> _startStreaming() async {
-    if (_controller == null || !_controller!.value.isInitialized) {
-      print('Camera is not initialized.');
+    if (_selectedVideo == null) {
+      print('No video selected.');
       return;
     }
 
-    _controller!.startImageStream((CameraImage image) async {
-      // Thực hiện stream trực tiếp từ camera mà không cần lưu file tạm thời
-      // Giả sử bạn đã chuyển đổi CameraImage sang định dạng phù hợp
+    String outputStreamUrl = 'rtsp://10.225.1.113:8554/mypath';
+    //String outputStreamUrl = 'rtsp://172.17.1.63:8554/test_stream'
+    String command = '-re -stream_loop -1 -i ${_selectedVideo!.path} -c copy -f rtsp -rtsp_transport tcp  $outputStreamUrl';
 
-      final command = '-f rawvideo -pixel_format nv21 -video_size ${image.width}x${image.height} -i - '
-          '-f rtsp -rtsp_transport tcp rtsp://171.244.206.227:554/mypath';
 
-      _flutterFFmpeg.execute(command).then((rc) {
-        print("FFmpeg process exited with rc $rc");
-        if (rc != 0) {
-          print("FFmpeg process exited with an error.");
-        } else {
-          print("FFmpeg process completed successfully.");
-        }
-      }).catchError((error) {
-        print("FFmpeg execution failed with error: $error");
-      });
+
+    print("Executing FFmpeg command: $command");
+    _flutterFFmpeg.execute(command).then((result) {
+      if (result == 0) {
+        print("FFmpeg process completed successfully.");
+      } else {
+        print("FFmpeg process failed with result: $result");
+        setState(() {
+          _isStreaming = false;
+    });
+      }
+    }).catchError((error) {
+      print("FFmpeg process encountered an error: $error");
     });
 
     setState(() {
@@ -78,36 +74,49 @@ class _CameraScreenState extends State<CameraScreen> {
   }
 
   Future<void> _stopStreaming() async {
-    await _controller?.stopImageStream();
     _flutterFFmpeg.cancel();
     setState(() {
       _isStreaming = false;
     });
   }
 
-  void _goToLiveView() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => LiveViewScreen(cameras: widget.cameras),
-      ),
-    );
+  Future<void> _selectVideo() async {
+    if (_isStreaming) {
+      print('Cannot select new video while streaming.');
+      return;
+    }
+
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickVideo(source: ImageSource.gallery);
+    if (pickedFile != null) {
+      setState(() {
+        _selectedVideo = File(pickedFile.path);
+      });
+      print('Selected video: ${basename(_selectedVideo!.path)}');
+    } else {
+      print('No video selected.');
+    }
   }
 
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
+  void _goToLiveView() {
+
+  }
+
+  void _clearSelectedVideo() {
+    if (_isStreaming) {
+      print('Cannot clear selected video while streaming.');
+      return;
+    }
+
+    setState(() {
+      _selectedVideo = null;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_controller == null || !_controller!.value.isInitialized) {
-      return Center(child: CircularProgressIndicator());
-    }
-
     return Scaffold(
-      appBar: AppBar(title: Text('Camera Control')),
+      appBar: AppBar(title: Text('Video Streaming')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -117,15 +126,31 @@ class _CameraScreenState extends State<CameraScreen> {
               child: Text('Live View'),
             ),
             SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _isStreaming ? null : _startStreaming,
-              child: Text('Start'),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _isStreaming ? _stopStreaming : null,
-              child: Text('Stop'),
-            ),
+            _selectedVideo == null
+                ? ElevatedButton(
+                    onPressed: _selectVideo,
+                    child: Text('Select Video'),
+                  )
+                : Column(
+                    children: [
+                      Text('Selected Video: ${basename(_selectedVideo!.path)}'),
+                      SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: _isStreaming ? null : _startStreaming,
+                        child: Text('Start Streaming'),
+                      ),
+                      SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: _isStreaming ? _stopStreaming : null,
+                        child: Text('Stop Streaming'),
+                      ),
+                      SizedBox(height: 20),
+                      ElevatedButton(
+                        onPressed: _clearSelectedVideo,
+                        child: Text('Clear Selected Video'),
+                      ),
+                    ],
+                  ),
           ],
         ),
       ),
